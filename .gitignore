@@ -1,0 +1,21 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Android Studio / profiler artifacts
+captures/
+.cxx/
+.externalNativeBuild/
+*.hprof
+
+# Build outputs
+*.apk
+*.aab
+
+# Session artifacts
+.superpowers/
+docs/superpowers/
