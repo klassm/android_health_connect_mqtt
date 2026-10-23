@@ -104,7 +104,7 @@ class StepSyncService : LifecycleService() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForegroundInternal("Starting…")
+        startForegroundInternal()
         Log.i(TAG, "onStartCommand action=${intent?.action} destroyed=$destroyed mqtt=${mqttClient != null}")
         lifecycleScope.launch(connectDispatcher) {
             if (initOnce.compareAndSet(false, true)) {
@@ -125,7 +125,6 @@ class StepSyncService : LifecycleService() {
                 )
 
                 startMessageConsumer()
-                observeStatusForNotification()
             }
             if (!destroyed) {
                 SyncStatusHolder.setPhase(SyncPhase.WAITING_FOR_NETWORK)
@@ -447,33 +446,14 @@ class StepSyncService : LifecycleService() {
         )
     }
 
-    private fun observeStatusForNotification() {
-        lifecycleScope.launch {
-            var lastText: String? = null
-            SyncStatusHolder.status.collect { status ->
-                val text = notificationTextFor(status)
-                if (text != lastText) {
-                    lastText = text
-                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    nm.notify(NOTIFICATION_ID, buildNotification(text))
-                }
-            }
-        }
-    }
-
-    private fun notificationTextFor(status: SyncStatus): String = when (status.phase) {
-        SyncPhase.WAITING_FOR_NETWORK -> "Waiting for network"
-        else -> status.phase.displayText(status.phaseDetail)
-    }
-
-    private fun startForegroundInternal(text: String) {
+    private fun startForegroundInternal() {
         val channel = NotificationChannel(CHANNEL_ID, getString(R.string.sync_channel_name), NotificationManager.IMPORTANCE_LOW)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(channel)
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            buildNotification(text),
+            buildNotification(getString(R.string.sync_notification_running)),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
         )
     }

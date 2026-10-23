@@ -2,6 +2,7 @@
 <resources>
     <string name="app_name">WalkingPad Sync</string>
     <string name="sync_channel_name">Sync status</string>
+    <string name="sync_notification_running">Running</string>
 
     <string name="tab_status">Status</string>
     <string name="tab_settings">Settings</string>
