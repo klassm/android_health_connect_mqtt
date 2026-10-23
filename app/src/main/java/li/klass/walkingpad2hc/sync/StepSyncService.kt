@@ -442,7 +442,28 @@ class StepSyncService : LifecycleService() {
                         catchUpWritten = tryWrite(DeltaResult.Record(start, now, steps - lastWritten.endSteps, steps))
                         if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
                     }
-                    lastWritten == null || !sameDay -> {
+                    lastWritten == null -> {
+                        // Fresh install (or wiped data): Health Connect may
+                        // still hold this app's earlier records (they survive
+                        // uninstall). Reconcile against own records only so
+                        // the day's counter is not written twice.
+                        if (steps > 0) {
+                            val own = writer.ownStepsSummary(now)
+                            val alreadyThere = own?.total ?: 0L
+                            if (alreadyThere >= steps) {
+                                Log.i(TAG, "fresh baseline: HC already holds $alreadyThere own steps today — skipping write")
+                                catchUpWritten = true
+                                saveLastWrittenIfNewer(steps, now)
+                            } else {
+                                val start = own?.latestEndTime
+                                    ?: HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
+                                val startAdj = if (start >= now) now - 1 else start
+                                catchUpWritten = tryWrite(DeltaResult.Record(startAdj, now, steps - alreadyThere, steps))
+                                if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
+                            }
+                        }
+                    }
+                    !sameDay -> {
                         if (steps > 0) {
                             val start = HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
                             catchUpWritten = tryWrite(DeltaResult.Record(start, now, steps, steps))

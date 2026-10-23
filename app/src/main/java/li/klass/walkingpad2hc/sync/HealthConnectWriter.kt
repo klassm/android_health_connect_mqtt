@@ -6,6 +6,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.metadata.Metadata as HcMetadata
 import androidx.health.connect.client.request.AggregateRequest
+import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.CancellationException
 import java.time.Instant
@@ -63,8 +64,43 @@ class HealthConnectWriter(private val context: Context) {
         null
     }
 
+    /**
+     * Steps and latest record end time written by THIS app today (other
+     * sources are excluded via the data origin). Used to reconcile a fresh
+     * baseline after reinstall so already-written ranges are not duplicated.
+     */
+    suspend fun ownStepsSummary(nowMillis: Long = System.currentTimeMillis()): OwnStepsSummary? = try {
+        if (HealthConnectClient.getSdkStatus(context) != HealthConnectClient.SDK_AVAILABLE) {
+            null
+        } else {
+            val client = HealthConnectClient.getOrCreate(context)
+            val response = client.readRecords(
+                ReadRecordsRequest(
+                    recordType = StepsRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(
+                        Instant.ofEpochMilli(startOfTodayMillis(nowMillis, ZoneId.systemDefault())),
+                        Instant.ofEpochMilli(nowMillis),
+                    ),
+                )
+            )
+            val own = response.records.filter { it.metadata.dataOrigin.packageName == context.packageName }
+            OwnStepsSummary(
+                total = own.sumOf { it.count },
+                latestEndTime = own.maxOfOrNull { it.endTime.toEpochMilli() },
+            )
+        }
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        null
+    }
+
     companion object {
         fun startOfTodayMillis(nowMillis: Long, zone: ZoneId): Long =
             Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
     }
 }
+
+data class OwnStepsSummary(
+    val total: Long,
+    val latestEndTime: Long?,
+)
