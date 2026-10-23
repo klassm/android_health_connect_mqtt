@@ -72,9 +72,25 @@ class SettingsRepository(private val context: Context) {
         return LastWritten(endSteps, endTime)
     }
 
+    suspend fun saveLastSeen(steps: Long, at: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[LAST_SEEN_STEPS] = steps
+            prefs[LAST_SEEN_AT] = at
+        }
+    }
+
+    suspend fun loadLastSeen(): LastSeen? {
+        val prefs = context.dataStore.data.first()
+        val steps = prefs[LAST_SEEN_STEPS] ?: return null
+        val at = prefs[LAST_SEEN_AT] ?: return null
+        return LastSeen(steps, at)
+    }
+
     companion object {
         val LAST_WRITTEN_END_STEPS = longPreferencesKey("lastWrittenEndSteps")
         val LAST_WRITTEN_END_TIME = longPreferencesKey("lastWrittenEndTime")
+        val LAST_SEEN_STEPS = longPreferencesKey("lastSeenSteps")
+        val LAST_SEEN_AT = longPreferencesKey("lastSeenAt")
         val PENDING_START = longPreferencesKey("pendingStart")
         val PENDING_END = longPreferencesKey("pendingEnd")
         val PENDING_COUNT = longPreferencesKey("pendingCount")
@@ -92,4 +108,10 @@ data class PendingRecord(
 data class LastWritten(
     val endSteps: Long,
     val endTime: Long,
+)
+
+/** Latest cumulative step counter received via MQTT; survives process restarts. */
+data class LastSeen(
+    val steps: Long,
+    val at: Long,
 )

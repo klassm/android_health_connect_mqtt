@@ -24,6 +24,7 @@ import com.hivemq.client.mqtt.datatypes.MqttQos
 import li.klass.walkingpad2hc.MainActivity
 import li.klass.walkingpad2hc.R
 import li.klass.walkingpad2hc.settings.AppSettings
+import li.klass.walkingpad2hc.settings.LastSeen
 import li.klass.walkingpad2hc.settings.LastWritten
 import li.klass.walkingpad2hc.settings.PendingRecord
 import li.klass.walkingpad2hc.settings.SettingsRepository
@@ -67,6 +68,8 @@ class StepSyncService : LifecycleService() {
     private var destroyed = false
     private var pendingRecord: DeltaResult.Record? = null
     private var connectivityManager: ConnectivityManager? = null
+    @Volatile
+    private var lastPersistedSeenSteps: Long? = null
     private val initOnce = AtomicBoolean(false)
     private val retryScheduled = AtomicBoolean(false)
     private var lastGateEvalMillis = 0L
@@ -117,6 +120,16 @@ class StepSyncService : LifecycleService() {
                 }
                 pendingRecord = settingsRepository.loadPending()?.let {
                     DeltaResult.Record(it.startTime, it.endTime, it.count, it.endSteps)
+                }
+                val lastSeen = settingsRepository.loadLastSeen()
+                lastPersistedSeenSteps = lastSeen?.steps
+                if (lastSeen != null) {
+                    SyncStatusHolder.update { status ->
+                        if (status.mqttSteps == null) status.copy(
+                            mqttSteps = lastSeen.steps,
+                            lastMessageAt = lastSeen.at,
+                        ) else status
+                    }
                 }
                 connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                 connectivityManager?.registerNetworkCallback(
@@ -370,6 +383,10 @@ class StepSyncService : LifecycleService() {
             if (it.lastMessageAt == null || now - it.lastMessageAt >= 5_000 || it.mqttSteps != steps)
                 it.copy(lastMessageAt = now, mqttSteps = steps)
             else it
+        }
+        if (lastPersistedSeenSteps != steps) {
+            lastPersistedSeenSteps = steps
+            settingsRepository.saveLastSeen(steps, now)
         }
         when (val result = calculator.onMessage(steps, now)) {
             is DeltaResult.Record -> {
