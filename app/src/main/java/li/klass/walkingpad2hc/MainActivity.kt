@@ -190,11 +190,15 @@ fun AppScreen(repository: SettingsRepository) {
 
     val hcWrite = HealthPermission.getWritePermission(StepsRecord::class)
     val hcRead = HealthPermission.getReadPermission(StepsRecord::class)
+    val errorHcPermission = stringResource(R.string.error_hc_permission)
+    val settingsSavedText = stringResource(R.string.settings_saved)
+    val settingsSaveFailedText = stringResource(R.string.settings_save_failed)
+    val passwordReenterHint = stringResource(R.string.password_reenter_hint)
     val hcLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract()
     ) { granted ->
         if (!granted.contains(hcWrite)) {
-            SyncStatusHolder.setError(context.getString(R.string.error_hc_permission))
+            SyncStatusHolder.setError(errorHcPermission)
         }
         ContextCompat.startForegroundService(context, Intent(context, StepSyncService::class.java))
     }
@@ -218,6 +222,7 @@ fun AppScreen(repository: SettingsRepository) {
         if (viewModel.locationPrompted) return
         viewModel.locationPrompted = true
         val permissions = buildList {
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
             if (Build.VERSION.SDK_INT >= 36 && !localNetworkGranted) add(LOCAL_NETWORK_PERMISSION)
@@ -231,6 +236,7 @@ fun AppScreen(repository: SettingsRepository) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
             if (viewModel.draft.ssid.isNotBlank() && !locationGranted) {
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
                 if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
             }
@@ -251,7 +257,7 @@ fun AppScreen(repository: SettingsRepository) {
         scope.launch {
             val ok = withContext(Dispatchers.IO) { repository.save(toSave) }
             snackbarHostState.showSnackbar(
-                context.getString(if (ok) R.string.settings_saved else R.string.settings_save_failed)
+                if (ok) settingsSavedText else settingsSaveFailedText
             )
             if (ok && toSave.ssid.isNotBlank() && !locationGranted) promptForLocation()
         }
@@ -296,7 +302,7 @@ fun AppScreen(repository: SettingsRepository) {
         val corrupt = withContext(Dispatchers.IO) { PasswordCipher.isCorrupt(loaded.password) }
         viewModel.load(loaded, corrupt)
         if (corrupt) {
-            SyncStatusHolder.setError(context.getString(R.string.password_reenter_hint))
+            SyncStatusHolder.setError(passwordReenterHint)
         }
         if (loaded.ssid.isNotBlank() && !locationGranted) promptForLocation()
     }

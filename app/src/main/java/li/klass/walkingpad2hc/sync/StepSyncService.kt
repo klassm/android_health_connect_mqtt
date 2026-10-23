@@ -135,6 +135,7 @@ class StepSyncService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        super.onDestroy()
         destroyed = true
         connectivityManager?.let { unbindProcessNetwork(it) }
         connectivityManager?.unregisterNetworkCallback(networkCallback)

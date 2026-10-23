@@ -1,12 +1,16 @@
 package li.klass.walkingpad2hc.sync
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.location.LocationManager
+import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 object WifiSsidScanner {
     private const val TAG = "MqttSync"
@@ -24,15 +28,22 @@ object WifiSsidScanner {
     }
 
     @Suppress("DEPRECATION")
-    fun latestResults(context: Context): List<String> = try {
-        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiManager.scanResults
-            .map { normalizeSsid(it.SSID) }
-            .filterNotNull()
-            .distinct()
-            .sorted()
-    } catch (_: Exception) {
-        emptyList()
+    fun latestResults(context: Context): List<String> {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return emptyList()
+        }
+        return try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiManager.scanResults
+                .map { normalizeSsid(it.SSID) }
+                .filterNotNull()
+                .distinct()
+                .sorted()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     fun currentWifiState(context: Context): Pair<Boolean, String?> = try {
@@ -44,7 +55,7 @@ object WifiSsidScanner {
             if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
             if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) continue
             isWifi = true
-            if (ssid == null) {
+            if (ssid == null && Build.VERSION.SDK_INT >= 29) {
                 val raw = (caps.transportInfo as? WifiInfo)?.ssid
                 Log.d(TAG, "wifi caps: network=$network rawSsid=$raw transportInfo=${caps.transportInfo?.javaClass?.simpleName}")
                 ssid = normalizeSsid(raw)
