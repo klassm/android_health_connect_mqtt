@@ -118,8 +118,14 @@ class StepSyncService : LifecycleService() {
                     SyncStatusHolder.setError("Settings load failed: ${e.message}")
                     AppSettings()
                 }
-                pendingRecord = settingsRepository.loadPending()?.let {
+                val loadedPending = settingsRepository.loadPending()?.let {
                     DeltaResult.Record(it.startTime, it.endTime, it.count, it.endSteps)
+                }
+                if (loadedPending != null && pendingCovered(loadedPending)) {
+                    Log.i(TAG, "pending record already covered by lastWritten — dropping (endSteps=${loadedPending.endSteps})")
+                    settingsRepository.savePending(null)
+                } else {
+                    pendingRecord = loadedPending
                 }
                 val lastSeen = settingsRepository.loadLastSeen()
                 lastPersistedSeenSteps = lastSeen?.steps
@@ -391,7 +397,7 @@ class StepSyncService : LifecycleService() {
         when (val result = calculator.onMessage(steps, now)) {
             is DeltaResult.Record -> {
                 if (tryWrite(result)) {
-                    settingsRepository.saveLastWritten(result.endSteps, result.endTime)
+                    saveLastWrittenIfNewer(result.endSteps, result.endTime)
                     setPending(null)
                     SyncStatusHolder.setError(null)
                 } else {
@@ -405,12 +411,20 @@ class StepSyncService : LifecycleService() {
                 var pendingWritten = true
                 val pending = pendingRecord
                 if (pending != null) {
-                    if (tryWrite(pending)) {
-                        lastWritten = LastWritten(pending.endSteps, pending.endTime)
-                        setPending(null)
-                    } else {
-                        pendingWritten = false
-                        SyncStatusHolder.setError(RETRY_MESSAGE)
+                    when {
+                        pendingCovered(pending) -> {
+                            Log.i(TAG, "pending record already covered by lastWritten — dropping (endSteps=${pending.endSteps})")
+                            setPending(null)
+                        }
+                        tryWrite(pending) -> {
+                            saveLastWrittenIfNewer(pending.endSteps, pending.endTime)
+                            lastWritten = LastWritten(pending.endSteps, pending.endTime)
+                            setPending(null)
+                        }
+                        else -> {
+                            pendingWritten = false
+                            SyncStatusHolder.setError(RETRY_MESSAGE)
+                        }
                     }
                 }
                 val lastWrittenDay = lastWritten?.let {
@@ -426,13 +440,13 @@ class StepSyncService : LifecycleService() {
                             HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault()),
                         )
                         catchUpWritten = tryWrite(DeltaResult.Record(start, now, steps - lastWritten.endSteps, steps))
-                        if (catchUpWritten) settingsRepository.saveLastWritten(steps, now)
+                        if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
                     }
                     lastWritten == null || !sameDay -> {
                         if (steps > 0) {
                             val start = HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
                             catchUpWritten = tryWrite(DeltaResult.Record(start, now, steps, steps))
-                            if (catchUpWritten) settingsRepository.saveLastWritten(steps, now)
+                            if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
                         }
                     }
                 }
@@ -440,11 +454,16 @@ class StepSyncService : LifecycleService() {
             }
             DeltaResult.Skipped -> {
                 val retry = pendingRecord ?: return
+                if (pendingCovered(retry)) {
+                    Log.i(TAG, "pending record already covered by lastWritten — dropping (endSteps=${retry.endSteps})")
+                    setPending(null)
+                    return
+                }
                 if (tryWrite(retry)) {
                     if (calculator.currentLastSteps() == retry.endSteps - retry.count) {
                         calculator.commit(retry)
                     }
-                    settingsRepository.saveLastWritten(retry.endSteps, retry.endTime)
+                    saveLastWrittenIfNewer(retry.endSteps, retry.endTime)
                     setPending(null)
                     SyncStatusHolder.setError(null)
                 } else {
@@ -456,6 +475,27 @@ class StepSyncService : LifecycleService() {
 
     private suspend fun tryWrite(record: DeltaResult.Record): Boolean =
         withTimeoutOrNull(30_000) { writer.writeSteps(record.startTime, record.endTime, record.count) } == true
+
+    private suspend fun pendingCovered(retry: DeltaResult.Record): Boolean {
+        val lastWritten = settingsRepository.loadLastWritten()
+        return SyncStatePolicy.isCoveredByLastWritten(lastWritten?.endSteps, retry.endSteps)
+    }
+
+    private suspend fun saveLastWrittenIfNewer(endSteps: Long, endTime: Long) {
+        val current = settingsRepository.loadLastWritten()
+        if (SyncStatePolicy.shouldPersistLastWritten(
+                current?.endSteps,
+                current?.let { dayOf(it.endTime) },
+                endSteps,
+                dayOf(endTime),
+            )
+        ) {
+            settingsRepository.saveLastWritten(endSteps, endTime)
+        }
+    }
+
+    private fun dayOf(millis: Long): LocalDate =
+        LocalDate.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault())
 
     private suspend fun setPending(record: DeltaResult.Record?) {
         pendingRecord = record
