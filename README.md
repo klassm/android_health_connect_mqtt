@@ -11,6 +11,17 @@ Health Connect–integrated app on your phone.
 WalkingPad ──BLE──▶ macOS Client ──MQTT──▶ MQTT Broker ──▶ Android App ──▶ Health Connect
 ```
 
+## Download
+
+Install the APK straight from the releases page — no need to check out and
+build this repo:
+
+**[Download `walkingpad-sync.apk`](https://github.com/klassm/android_health_connect_mqtt/releases/latest/download/walkingpad-sync.apk)**
+
+That link always points at the APK asset of the most recent GitHub release;
+a fresh build is published automatically after every push to `master`.
+Android will ask you to allow installs from this source (sideloading).
+
 ## How it works
 
 - The [macOS client](https://github.com/klassm/walkingpad_macos_client) publishes its
@@ -54,7 +65,7 @@ WalkingPad ──BLE──▶ macOS Client ──MQTT──▶ MQTT Broker ─�
 
 ## Setup
 
-1. Build and install the APK, open the app, and grant the requested permissions:
+1. Download the APK (see [Download](#download)) and install it, open the app, and grant the requested permissions:
    - **Health Connect** — write & read steps
    - **Nearby devices** (incl. local network access) — required by Android to
      reach the broker on your LAN and to read the Wi-Fi SSID
