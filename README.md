@@ -85,6 +85,7 @@ Android will ask you to allow installs from this source (sideloading).
 | `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` / `FOREGROUND_SERVICE_LOCATION` | Background step sync |
 | `ACCESS_WIFI_STATE` / `CHANGE_WIFI_STATE` / `CHANGE_NETWORK_STATE` | Wi-Fi gate + binding the socket to the Wi-Fi network |
 | `NEARBY_WIFI_DEVICES` | SSID read without full location on Android 13+ |
+| `ACCESS_COARSE_LOCATION` / `ACCESS_FINE_LOCATION` | Android 12+ requires both; used for SSID resolution for the Wi-Fi gate |
 | `ACCESS_LOCAL_NETWORK` | Android 17 local network protection — required to reach the broker |
 | `READ_HEALTH_STEPS` / `WRITE_HEALTH_STEPS` | Health Connect step sync |
 
