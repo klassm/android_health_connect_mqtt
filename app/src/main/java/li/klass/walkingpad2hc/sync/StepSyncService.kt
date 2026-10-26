@@ -547,21 +547,45 @@ class StepSyncService : LifecycleService() {
     /**
      * The `dataSync` foreground service type is limited to 6 hours per 24h on
      * Android 15+, after which the system stops the service. The `health`
-     * type (Android 14+) has no such limit and this app is exactly that: a
-     * Health Connect data exchange. Fall back to `dataSync` below API 34 or
-     * when no Health Connect permission is held yet (a requirement of the
-     * health type).
+     * type (Android 14+) has no such limit and fits this app exactly: a
+     * Health Connect data exchange.
+     *
+     * The health type is only valid with a QUALIFYING permission (see
+     * [hasQualifyingHealthPermission]) — checking the write permission
+     * here crashed with SecurityException at startForeground. Without
+     * qualification we fall back to `dataSync`, which is valid everywhere.
      */
     private fun foregroundServiceTypes(): Int {
-        val hasHcPermission = ContextCompat.checkSelfPermission(
-            this, "android.permission.health.WRITE_STEPS"
-        ) == PackageManager.PERMISSION_GRANTED
-        return if (Build.VERSION.SDK_INT >= 34 && hasHcPermission) {
+        val useHealth = ForegroundServiceTypePolicy.shouldUseHealthType(
+            Build.VERSION.SDK_INT, hasQualifyingHealthPermission()
+        )
+        return if (useHealth) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         } else {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         }
     }
+
+    /**
+     * The system requires, for the `health` FGS type, ANY of these runtime
+     * permissions to be granted (mirrors the framework's requirement list
+     * exactly): ACTIVITY_RECOGNITION, HIGH_SAMPLING_RATE_SENSORS, or one of
+     * the listed health READ permissions. WRITE_STEPS / READ_STEPS do not
+     * qualify. The app requests ACTIVITY_RECOGNITION from MainActivity so
+     * that the non-limited health type becomes available when granted.
+     */
+    private fun hasQualifyingHealthPermission(): Boolean =
+        listOf(
+            "android.permission.ACTIVITY_RECOGNITION",
+            "android.permission.HIGH_SAMPLING_RATE_SENSORS",
+            "android.permission.health.READ_HEART_RATE",
+            "android.permission.health.READ_SKIN_TEMPERATURE",
+            "android.permission.health.READ_OXYGEN_SATURATION",
+            "android.permission.health.READ_BLOOD_PRESSURE",
+            "android.permission.health.READ_HEART_RATE_VARIABILITY",
+            "android.permission.health.READ_RESPIRATORY_RATE",
+            "android.permission.health.READ_VO2_MAX",
+        ).any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 
     private fun buildNotification(text: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)

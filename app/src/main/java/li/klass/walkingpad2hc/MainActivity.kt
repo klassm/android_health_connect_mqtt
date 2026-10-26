@@ -243,6 +243,15 @@ fun AppScreen(repository: SettingsRepository) {
             if (Build.VERSION.SDK_INT >= 36 && !localNetworkGranted) {
                 add(LOCAL_NETWORK_PERMISSION)
             }
+            // Qualifying permission for the `health` foreground service type
+            // (API 34+): without it the service falls back to the time-limited
+            // dataSync type. ACTIVITY_RECOGNITION is API 29+.
+            if (Build.VERSION.SDK_INT >= 34 && ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.ACTIVITY_RECOGNITION
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.ACTIVITY_RECOGNITION)
+            }
         }
         if (runtime.isEmpty()) {
             hcLauncher.launch(setOf(hcWrite, hcRead))
