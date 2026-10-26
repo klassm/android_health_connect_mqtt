@@ -408,7 +408,16 @@ class StepSyncService : LifecycleService() {
         when (val result = calculator.onMessage(steps, now)) {
             is DeltaResult.Record -> {
                 Log.i(TAG, "delta: counter=$steps +${result.count} [${result.startTime}→${result.endTime}]")
-                if (tryWrite(result)) {
+                if (DeltaRatePolicy.isImplausible(result.count, result.endTime - result.startTime)) {
+                    Log.w(
+                        TAG,
+                        "delta implausible: ${result.count} steps in ${(result.endTime - result.startTime) / 1000} s — " +
+                            "treating as baseline (counter jump, e.g. treadmill reboot)"
+                    )
+                    // The calculator already sits at the new counter position;
+                    // reconciliation decides how much of it is genuinely new.
+                    handleBaseline(steps, now)
+                } else if (tryWrite(result)) {
                     saveLastWrittenIfNewer(result.endSteps, result.endTime)
                     setPending(null)
                     SyncStatusHolder.setError(null)
@@ -418,64 +427,7 @@ class StepSyncService : LifecycleService() {
                     SyncStatusHolder.setError(RETRY_MESSAGE)
                 }
             }
-            DeltaResult.BaselineSet -> {
-                var lastWritten = settingsRepository.loadLastWritten()
-                var pendingWritten = true
-                val pending = pendingRecord
-                if (pending != null) {
-                    when {
-                        pendingCovered(pending) -> {
-                            Log.i(TAG, "pending record already covered by lastWritten — dropping (endSteps=${pending.endSteps})")
-                            setPending(null)
-                        }
-                        tryWrite(pending) -> {
-                            saveLastWrittenIfNewer(pending.endSteps, pending.endTime)
-                            lastWritten = LastWritten(pending.endSteps, pending.endTime)
-                            setPending(null)
-                        }
-                        else -> {
-                            pendingWritten = false
-                            SyncStatusHolder.setError(RETRY_MESSAGE)
-                        }
-                    }
-                }
-                val todayStart = HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
-                var catchUpWritten = true
-                when (val decision = CatchUpPolicy.decide(
-                    CatchUpPolicy.Input(
-                        steps = steps,
-                        now = now,
-                        zone = ZoneId.systemDefault(),
-                        lastWritten = lastWritten,
-                        lastSeen = persistedLastSeen,
-                        own = writer.ownStepsSummary(now),
-                    )
-                )) {
-                    CatchUpPolicy.Decision.None -> {}
-                    CatchUpPolicy.Decision.Covered -> {
-                        Log.i(TAG, "baseline: HC already holds everything up to $steps own steps today — skipping write")
-                        saveLastWrittenIfNewer(steps, now)
-                    }
-                    is CatchUpPolicy.Decision.Defer -> {
-                        Log.w(TAG, "baseline: reconciliation unavailable — parking catch-up as pending (endSteps=$steps)")
-                        catchUpWritten = false
-                        if (pendingWritten && pendingRecord == null) {
-                            setPending(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
-                        }
-                        SyncStatusHolder.setError(RETRY_MESSAGE)
-                    }
-                    is CatchUpPolicy.Decision.Write -> {
-                        Log.i(TAG, "baseline catch-up: writing ${decision.count} steps from ${decision.start}")
-                        catchUpWritten = tryWrite(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
-                        if (catchUpWritten) {
-                            saveLastWrittenIfNewer(steps, now)
-                        } else if (pendingWritten && pendingRecord == null) {
-                            setPending(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
-                        }
-                    }
-                }
-                if (pendingWritten && catchUpWritten) SyncStatusHolder.setError(null)
-            }
+            DeltaResult.BaselineSet -> handleBaseline(steps, now)
             DeltaResult.Skipped -> {
                 val retry = pendingRecord ?: return
                 if (pendingCovered(retry)) {
@@ -495,6 +447,64 @@ class StepSyncService : LifecycleService() {
                 }
             }
         }
+    }
+
+    private suspend fun handleBaseline(steps: Long, now: Long) {
+        var lastWritten = settingsRepository.loadLastWritten()
+        var pendingWritten = true
+        val pending = pendingRecord
+        if (pending != null) {
+            when {
+                pendingCovered(pending) -> {
+                    Log.i(TAG, "pending record already covered by lastWritten — dropping (endSteps=${pending.endSteps})")
+                    setPending(null)
+                }
+                tryWrite(pending) -> {
+                    saveLastWrittenIfNewer(pending.endSteps, pending.endTime)
+                    lastWritten = LastWritten(pending.endSteps, pending.endTime)
+                    setPending(null)
+                }
+                else -> {
+                    pendingWritten = false
+                    SyncStatusHolder.setError(RETRY_MESSAGE)
+                }
+            }
+        }
+        var catchUpWritten = true
+        when (val decision = CatchUpPolicy.decide(
+            CatchUpPolicy.Input(
+                steps = steps,
+                now = now,
+                zone = ZoneId.systemDefault(),
+                lastWritten = lastWritten,
+                lastSeen = persistedLastSeen,
+                own = writer.ownStepsSummary(now),
+            )
+        )) {
+            CatchUpPolicy.Decision.None -> {}
+            CatchUpPolicy.Decision.Covered -> {
+                Log.i(TAG, "baseline: HC already holds everything up to $steps own steps today — skipping write")
+                saveLastWrittenIfNewer(steps, now)
+            }
+            is CatchUpPolicy.Decision.Defer -> {
+                Log.w(TAG, "baseline: reconciliation unavailable — parking catch-up as pending (endSteps=$steps)")
+                catchUpWritten = false
+                if (pendingWritten && pendingRecord == null) {
+                    setPending(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
+                }
+                SyncStatusHolder.setError(RETRY_MESSAGE)
+            }
+            is CatchUpPolicy.Decision.Write -> {
+                Log.i(TAG, "baseline catch-up: writing ${decision.count} steps from ${decision.start}")
+                catchUpWritten = tryWrite(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
+                if (catchUpWritten) {
+                    saveLastWrittenIfNewer(steps, now)
+                } else if (pendingWritten && pendingRecord == null) {
+                    setPending(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
+                }
+            }
+        }
+        if (pendingWritten && catchUpWritten) SyncStatusHolder.setError(null)
     }
 
     private suspend fun tryWrite(record: DeltaResult.Record): Boolean =
