@@ -12,6 +12,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -70,6 +71,7 @@ class StepSyncService : LifecycleService() {
     private var connectivityManager: ConnectivityManager? = null
     @Volatile
     private var lastPersistedSeenSteps: Long? = null
+    private var persistedLastSeen: LastSeen? = null
     private val initOnce = AtomicBoolean(false)
     private val retryScheduled = AtomicBoolean(false)
     private var lastGateEvalMillis = 0L
@@ -129,6 +131,7 @@ class StepSyncService : LifecycleService() {
                 }
                 val lastSeen = settingsRepository.loadLastSeen()
                 lastPersistedSeenSteps = lastSeen?.steps
+                persistedLastSeen = lastSeen
                 if (lastSeen != null) {
                     SyncStatusHolder.update { status ->
                         if (status.mqttSteps == null) status.copy(
@@ -210,8 +213,15 @@ class StepSyncService : LifecycleService() {
         val reason = gate.reason(isWifi, ssid, settings.ssid)
         Log.i(TAG, "gate: isWifi=$isWifi ssid=$ssid configured=${settings.ssid} reason=$reason mqtt=${mqttClient != null}")
         if (reason != null) {
+            if (mqttClient != null) {
+                // SSID reads are unreliable while the screen is off or the app
+                // is backgrounded; a live MQTT connection is itself proof that
+                // we are on the right network. Keep it and let the connection
+                // state (not the gate) decide when it is gone.
+                Log.i(TAG, "gate blocked but connection established — keeping MQTT")
+                return
+            }
             SyncStatusHolder.setPhase(SyncPhase.WAITING_FOR_NETWORK, reason)
-            disconnectMqtt()
             unbindProcessNetwork(cm)
             return
         }
@@ -427,47 +437,38 @@ class StepSyncService : LifecycleService() {
                         }
                     }
                 }
-                val lastWrittenDay = lastWritten?.let {
-                    LocalDate.ofInstant(Instant.ofEpochMilli(it.endTime), ZoneId.systemDefault())
-                }
-                val today = LocalDate.ofInstant(Instant.ofEpochMilli(now), ZoneId.systemDefault())
-                val sameDay = lastWrittenDay == today
+                val todayStart = HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
                 var catchUpWritten = true
-                when {
-                    lastWritten != null && sameDay && steps > lastWritten.endSteps -> {
-                        val start = maxOf(
-                            lastWritten.endTime,
-                            HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault()),
-                        )
-                        catchUpWritten = tryWrite(DeltaResult.Record(start, now, steps - lastWritten.endSteps, steps))
-                        if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
+                when (val decision = CatchUpPolicy.decide(
+                    CatchUpPolicy.Input(
+                        steps = steps,
+                        now = now,
+                        zone = ZoneId.systemDefault(),
+                        lastWritten = lastWritten,
+                        lastSeen = persistedLastSeen,
+                        own = writer.ownStepsSummary(now),
+                    )
+                )) {
+                    CatchUpPolicy.Decision.None -> {}
+                    CatchUpPolicy.Decision.Covered -> {
+                        Log.i(TAG, "baseline: HC already holds everything up to $steps own steps today — skipping write")
+                        saveLastWrittenIfNewer(steps, now)
                     }
-                    lastWritten == null -> {
-                        // Fresh install (or wiped data): Health Connect may
-                        // still hold this app's earlier records (they survive
-                        // uninstall). Reconcile against own records only so
-                        // the day's counter is not written twice.
-                        if (steps > 0) {
-                            val own = writer.ownStepsSummary(now)
-                            val alreadyThere = own?.total ?: 0L
-                            if (alreadyThere >= steps) {
-                                Log.i(TAG, "fresh baseline: HC already holds $alreadyThere own steps today — skipping write")
-                                catchUpWritten = true
-                                saveLastWrittenIfNewer(steps, now)
-                            } else {
-                                val start = own?.latestEndTime
-                                    ?: HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
-                                val startAdj = if (start >= now) now - 1 else start
-                                catchUpWritten = tryWrite(DeltaResult.Record(startAdj, now, steps - alreadyThere, steps))
-                                if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
-                            }
+                    is CatchUpPolicy.Decision.Defer -> {
+                        Log.w(TAG, "baseline: reconciliation unavailable — parking catch-up as pending (endSteps=$steps)")
+                        catchUpWritten = false
+                        if (pendingWritten && pendingRecord == null) {
+                            setPending(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
                         }
+                        SyncStatusHolder.setError(RETRY_MESSAGE)
                     }
-                    !sameDay -> {
-                        if (steps > 0) {
-                            val start = HealthConnectWriter.startOfTodayMillis(now, ZoneId.systemDefault())
-                            catchUpWritten = tryWrite(DeltaResult.Record(start, now, steps, steps))
-                            if (catchUpWritten) saveLastWrittenIfNewer(steps, now)
+                    is CatchUpPolicy.Decision.Write -> {
+                        Log.i(TAG, "baseline catch-up: writing ${decision.count} steps from ${decision.start}")
+                        catchUpWritten = tryWrite(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
+                        if (catchUpWritten) {
+                            saveLastWrittenIfNewer(steps, now)
+                        } else if (pendingWritten && pendingRecord == null) {
+                            setPending(DeltaResult.Record(decision.start, decision.end, decision.count, steps))
                         }
                     }
                 }
@@ -499,7 +500,13 @@ class StepSyncService : LifecycleService() {
 
     private suspend fun pendingCovered(retry: DeltaResult.Record): Boolean {
         val lastWritten = settingsRepository.loadLastWritten()
-        return SyncStatePolicy.isCoveredByLastWritten(lastWritten?.endSteps, retry.endSteps)
+        if (SyncStatePolicy.isCoveredByLastWritten(lastWritten?.endSteps, retry.endSteps)) return true
+        // The persisted marker can lag reality (process death between a
+        // successful write and persisting the marker), so also treat the
+        // retry as covered when Health Connect already holds that many own
+        // steps for today.
+        val own = writer.ownStepsSummary(System.currentTimeMillis())
+        return own != null && own.total >= retry.endSteps
     }
 
     private suspend fun saveLastWrittenIfNewer(endSteps: Long, endTime: Long) {
@@ -533,8 +540,27 @@ class StepSyncService : LifecycleService() {
             this,
             NOTIFICATION_ID,
             buildNotification(getString(R.string.sync_notification_running)),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+            foregroundServiceTypes(),
         )
+    }
+
+    /**
+     * The `dataSync` foreground service type is limited to 6 hours per 24h on
+     * Android 15+, after which the system stops the service. The `health`
+     * type (Android 14+) has no such limit and this app is exactly that: a
+     * Health Connect data exchange. Fall back to `dataSync` below API 34 or
+     * when no Health Connect permission is held yet (a requirement of the
+     * health type).
+     */
+    private fun foregroundServiceTypes(): Int {
+        val hasHcPermission = ContextCompat.checkSelfPermission(
+            this, "android.permission.health.WRITE_STEPS"
+        ) == PackageManager.PERMISSION_GRANTED
+        return if (Build.VERSION.SDK_INT >= 34 && hasHcPermission) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        }
     }
 
     private fun buildNotification(text: String): Notification =

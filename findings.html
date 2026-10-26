@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- TITLE: replace for every page -->
+<title>Health Connect Sync — Duplicate Steps & Background Stops</title>
+<style>
+  /* Design system — edit token values if the content demands it,
+     but never bypass tokens with hardcoded colors. */
+  :root {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --text: #1f2328;
+    --text-muted: #656d76;
+    --border: #d0d7de;
+    --accent: #0969da;
+    --accent-tint: rgba(9, 105, 218, 0.12);
+    --link: #0969da;
+    --success: #1a7f37;
+    --success-tint: rgba(26, 127, 55, 0.14);
+    --warning: #9a6700;
+    --warning-tint: #fff3c4;
+    --danger: #cf222e;
+    --danger-tint: rgba(207, 34, 46, 0.12);
+    --radius: 6px;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 1rem;
+    --space-4: 1.5rem;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --border: #30363d;
+      --accent: #4493f8;
+      --accent-tint: rgba(68, 147, 248, 0.16);
+      --link: #71b2ff;
+      --success: #3fb950;
+      --success-tint: rgba(63, 185, 80, 0.16);
+      --warning: #d29922;
+      --warning-tint: rgba(187, 128, 9, 0.18);
+      --danger: #f85149;
+      --danger-tint: rgba(248, 81, 73, 0.16);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  .page { max-width: 60rem; margin: 0 auto; padding: 0 var(--space-4) var(--space-4); }
+
+  /* Header: title, generation date, one-line context. */
+  .page-header { padding: var(--space-4) 0 var(--space-3); }
+  .page-header h1 { margin: 0 0 var(--space-1); font-size: 1.6rem; }
+  .page-header .meta { color: var(--text-muted); font-size: 0.875rem; }
+  .page-header .meta .sep { margin: 0 var(--space-1); }
+
+  /* "On this page" bar: quiet row of pills, one anchor per section.
+     Delete this nav (and its CSS) on single-section pages. */
+  .toc {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) 0;
+    background: var(--surface); /* opaque — scrolled content must not bleed through */
+    border-bottom: 1px solid var(--border);
+  }
+  .toc .toc-label {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: var(--space-1);
+  }
+  .toc a {
+    display: inline-block;
+    padding: 0.25em 0.75em;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+  .toc a:hover, .toc a:focus-visible {
+    color: var(--accent);
+    background: var(--accent-tint);
+    outline: none;
+  }
+  .toc a:focus-visible { box-shadow: 0 0 0 2px var(--accent-tint); }
+
+  /* Links: token-styled, underline kept (color is reinforcement). */
+  a { color: var(--link); text-underline-offset: 0.15em; }
+  a:hover, a:focus-visible { color: var(--accent); }
+
+  section { margin-top: var(--space-4); }
+  h2 { font-size: 1.25rem; padding-bottom: var(--space-1); border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1.05rem; }
+
+  /* Badges: small filled labels for fixed value sets (e.g. status). */
+  .badge {
+    display: inline-block;
+    padding: 0.1em 0.6em;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .badge-success { background: var(--success-tint); color: var(--success); }
+  .badge-warning { background: var(--warning-tint); color: var(--warning); }
+  .badge-danger { background: var(--danger-tint); color: var(--danger); }
+
+  /* Chips: small outlined labels for open-ended tags/categories. */
+  .chip {
+    display: inline-block;
+    padding: 0.1em 0.6em;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* Cards: bordered surfaces, one item per card. */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-3);
+    margin-top: var(--space-2);
+  }
+  .card h3 { margin: 0 0 var(--space-1); }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: var(--space-2); }
+
+  /* Expandable cards: collapsed by default, gist on the summary line. */
+  details.card > summary { cursor: pointer; list-style: revert; }
+  details.card > summary::marker { color: var(--text-muted); }
+  details.card > summary h3, details.card > summary .badge, details.card > summary .chip { display: inline; }
+
+  /* Manual items: whole-card / whole-row warning tint (never only a badge). */
+  .card.manual { background: var(--warning-tint); border-color: var(--warning); }
+  tbody tr.manual { background: var(--warning-tint); }
+  tbody tr.manual td:first-child { border-left: 3px solid var(--warning); }
+
+  /* Tables: comparable items with shared attributes. */
+  table { border-collapse: collapse; width: 100%; margin-top: var(--space-2); }
+  th, td { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-muted); font-size: 0.875rem; }
+
+  /* Empty section state: visible information, not a missing section. */
+  .empty { color: var(--text-muted); font-style: italic; margin-top: var(--space-2); }
+
+  /* Code and file paths. */
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-2);
+    overflow-x: auto;
+  }
+  code, .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875em; }
+
+  /* Diagrams: token-styled inline SVG. */
+  .diagram { margin: var(--space-3) 0; }
+  .diagram svg { max-width: 100%; height: auto; display: block; }
+  .diagram .dg-box { fill: var(--surface); stroke: var(--border); }
+  .diagram .dg-text { fill: var(--text); }
+  .diagram .dg-muted { fill: var(--text-muted); }
+  .diagram .dg-accent { fill: var(--accent); }
+
+  @media print {
+    .toc { display: none; }
+    details::details-content { display: block; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="page-header">
+    <!-- TITLE: one <h1>, the deliverable's name -->
+    <h1>Health Connect Sync — Root-Cause Review</h1>
+    <p class="meta"><time datetime="2026-10-26">2026-10-26</time><span class="sep">·</span>Duplicate step postings at start sync &amp; sync stopping in background — code review of walkingpad2hc; fixes implemented, 73/73 unit tests passing</p>
+    <!-- META: generation date · one-line context (what this covers, derived from what; caveats) -->
+    <p class="meta"><time datetime="YYYY-MM-DD">YYYY-MM-DD</time><span class="sep">·</span>Context line</p>
+  </header>
+
+  <!-- TOC: one <a href="#section-id"> per section; delete the whole nav on single-section pages -->
+  <nav class="toc">
+    <span class="toc-label">On this page</span>
+    <a href="#summary">Summary</a>
+    <a href="#duplicates">Duplicate-step defects</a>
+    <a href="#background">Background stops</a>
+    <a href="#fixes">Fixes implemented</a>
+    <a href="#usecases">Use-case matrix</a>
+    <a href="#verification">Verification</a>
+    <a href="#limitations">Known limitations</a>
+  </nav>
+
+  <main>
+    <!-- SECTIONS: build the body one section per edit (SKILL.md Step 3).
+         Author each section in place here, keep ids matching the TOC,
+         cross-link items that appear in several sections, and give
+         manual-action items their .manual tint. -->
+<section id="summary">
+    <h2>Summary</h2>
+    <p>Two symptoms were investigated in the WalkingPad → Health Connect sync (<span class="path">app/src/main/java/li/klass/walkingpad2hc/sync/</span>):</p>
+    <ol>
+      <li><strong>Huge amounts of steps posted although already posted before — always during start sync.</strong> Root cause: the baseline/catch-up logic trusted persisted counters (<code class="path">lastWritten</code>) and assumptions (daily counter reset) instead of reconciling against what Health Connect actually holds. Three concrete duplication paths found; all fixed.</li>
+      <li><strong>Sync stops when the app goes to background.</strong> Two plausible causes found and fixed: the <code class="path">dataSync</code> foreground-service 6-hour budget (Android 15+) and the Wi-Fi SSID gate tearing down a live MQTT connection whenever the SSID becomes unreadable (typical with the screen off). A third (OEM battery optimization) is a manual action.</li>
+    </ol>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Core principle of the fix</h3>
+        <p style="margin:0">Health Connect itself — the app's <em>own records for today</em> — is now the source of truth for "what was already posted". Persisted markers are hints only. Where state is ambiguous, the policy <strong>prefers under-counting over duplicating</strong>: duplicates are permanent, missed steps are recovered by subsequent delta records.</p>
+      </div>
+      <div class="card">
+        <h3>New decision module</h3>
+        <p style="margin:0">All baseline/catch-up decisions moved into a pure, fully unit-tested class <span class="path">CatchUpPolicy.kt</span> (19 new test cases covering the full use-case matrix, see <a href="#usecases">Use-case matrix</a>).</p>
+      </div>
+      <div class="card">
+        <h3>Status</h3>
+        <p style="margin:0"><span class="badge badge-success">Implemented</span> <span class="badge badge-success">73/73 tests passing</span> <span class="badge badge-warning">Device verification pending</span></p>
+      </div>
+    </div>
+  </section>
+  <section id="duplicates">
+    <h2>Duplicate-step defects <span class="badge badge-danger">3 critical</span></h2>
+    <p>All three critical paths live in the <strong>baseline / catch-up logic</strong> — the branch that runs when the service starts, receives its first MQTT message (the treadmill's cumulative counter), and must decide how much of it is new. The per-message delta path (<span class="path">StepDeltaCalculator</span> records) was reviewed and is correct — it was <em>not</em> the source of the duplicates.</p>
+    <details class="card" id="d1" open>
+      <summary><h3>D1 — Fresh baseline re-posts the full counter when Health Connect read fails</h3> <span class="badge badge-danger">critical</span> <span class="chip">start sync</span></summary>
+      <p>On a <em>fresh baseline</em> (no persisted <code class="path">lastWritten</code> marker, e.g. first sync of the day after the old day-rollover logic, or after state loss) the old code read the app's own steps from Health Connect via <span class="path">HealthConnectWriter.ownStepsSummary()</span>. That method returns <code>null</code> on <strong>any</strong> exception. The old code treated <code>null</code> as "Health Connect is empty" → <code>alreadyThere = 0</code> → wrote the <strong>entire day counter</strong> again.</p>
+      <p>Health Connect reads are exactly the kind of call that fails right after process start (client not yet available, binder contention right after <code class="path">startForegroundService</code>). That matches the reported pattern: <em>"always during start sync"</em>.</p>
+      <pre><code>// old behavior (BaselineSet branch)
+val own = writer.ownStepsSummary()          // null on ANY exception
+val alreadyThere = own?.total ?: 0          // read failure == empty day
+writeSteps(..., steps - alreadyThere)       // full counter re-posted</code></pre>
+      <p><strong>Fix:</strong> a failed reconciliation read now <em>defers</em> the write (<span class="path">CatchUpPolicy</span> final guard: never write without a successful read). The decision is parked as a pending record and retried with the next MQTT message.</p>
+    </details>
+    <details class="card" id="d3">
+      <summary><h3>D2 — Day rollover assumed the treadmill counter resets at midnight</h3> <span class="badge badge-danger">critical</span> <span class="chip">first start of day</span></summary>
+      <p>The old <code class="path">!sameDay</code> branch wrote the <strong>full counter value</strong> whenever the last written marker was from a previous day. That is only correct if the treadmill's counter resets across midnight. If the treadmill stays powered (or its counter is cumulative), the MQTT counter keeps counting — and the sync re-posted <em>everything already posted</em> as one giant record. This is the prime suspect for "huge amounts of steps" on the first sync of the day.</p>
+      <p><strong>Fix:</strong> across days the policy compares the incoming counter against <code class="path">max(lastWritten.endSteps, lastSeen.steps)</code>. A counter at or above yesterday's level is treated as a <em>continuation</em> — only the excess is written; a lower value is treated as a reset and reconciled against today's own Health Connect records.</p>
+    </details>
+    <details class="card" id="d2">
+      <summary><h3>D3 — Same-day catch-up trusted the persisted marker alone</h3> <span class="badge badge-warning">warning</span> <span class="chip">restart kill window</span></summary>
+      <p>On restart, the old same-day catch-up computed the gap purely from the persisted <code class="path">lastWritten</code> marker. The marker is written <em>after</em> a successful <code class="path">insertRecords</code> — if the process dies in between (or the DataStore persist fails), the marker lags behind what Health Connect actually holds, and the restart re-writes the already-written gap. The <code class="path">clientRecordId</code> dedupe does not help here: the catch-up computes a <em>new</em> start/end range, producing a new ID.</p>
+      <p><strong>Fix:</strong> catch-up coverage is now <code class="path">max(marker, own Health Connect total for today)</code> — the actual records cap the marker.</p>
+    </details>
+    <details class="card" id="d4">
+      <summary><h3>D4 — Pending-record retry checked only the marker, not Health Connect</h3> <span class="badge badge-warning">warning</span> <span class="chip">retry path</span></summary>
+      <p><span class="path">pendingCovered()</span> decided "already written" solely via <span class="path">SyncStatePolicy.isCoveredByLastWritten</span>. Same lag window as D3: a pending record could be re-written although Health Connect already holds it (mitigated only when the recomputed range produced the identical <code class="path">clientRecordId</code>).</p>
+      <p><strong>Fix:</strong> the retry path now also reconciles against the app's own Health Connect records before re-writing.</p>
+    </details>
+    <div class="card">
+      <h3>Context: why clientRecordId alone didn't save us</h3>
+      <p style="margin:0">Every written record carries <code class="path">clientRecordId = "wp2hc-&lt;start&gt;-&lt;end&gt;-&lt;count&gt;"</code>, so an <em>exact</em> retry (same range) is upserted by Health Connect instead of duplicated. But all four defect paths computed a <em>different</em> range or count than the original write — new ID, real duplicate. The dedupe remains useful for exact retries (e.g. timeout-after-success), but it cannot be the only line of defense.</p>
+    </div>
+  </section>
+  <section id="background">
+    <h2>Background stops <span class="badge badge-danger">1 critical</span></h2>
+    <p>The second symptom — sync stopping while the app is in the background — has two code-level causes (both fixed) and one environmental cause (manual action).</p>
+    <details class="card" id="b1" open>
+      <summary><h3>B1 — <code class="path">dataSync</code> foreground service is time-limited on Android 15+</h3> <span class="badge badge-danger">critical</span> <span class="chip">targetSdk 37</span></summary>
+      <p>Since Android 15, foreground services of type <code class="path">dataSync</code> (and <code class="path">mediaProcessing</code>) get a <strong>6-hour runtime budget per 24 hours</strong>. When exhausted, the system calls <code class="path">ForegroundServiceTypeTimeoutException</code>-style <code class="path">onTimeout()</code> and the service must stop — our <span class="path">StepSyncService.handleTimeout()</span> sets an error and calls <code class="path">stopSelf()</code>. Foregrounding the app resets the budget, which is why the sync "magically works again" when the app is opened — matching the reported "stops in background".</p>
+      <p><strong>Fix:</strong> the service now declares a <code class="path">health</code> foreground-service type (not time-limited) when the Health Connect write permission is granted (API 34+), falling back to <code class="path">dataSync</code> on older APIs or without the permission. Manifest updated with <code class="path">FOREGROUND_SERVICE_HEALTH</code> permission and the new service type. Verified against the official documentation: <span class="path">developer.android.com/develop/background-work/services/fgs/timeout</span> — only <code class="path">dataSync</code> and <code class="path">mediaProcessing</code> are limited; <code class="path">health</code> is not.</p>
+    </details>
+    <details class="card" id="b2">
+      <summary><h3>B2 — Wi-Fi gate disconnected a working MQTT connection on unreadable SSID</h3> <span class="badge badge-warning">warning</span> <span class="chip">screen off</span></summary>
+      <p><span class="path">evaluateGate()</span> called <code class="path">disconnectMqtt()</code> whenever the gate reported a reason — including <em>"Wi-Fi SSID unavailable"</em>. Android frequently fails to deliver the SSID with the screen off or in the background (and always after a process restart, where the cached <code class="path">lastKnownSsid</code> is empty). Result: a perfectly healthy MQTT connection on the right network was torn down, and the service sat in <code class="path">WAITING_FOR_NETWORK</code> until the screen came back on.</p>
+      <p><strong>Fix:</strong> when the gate is blocked but an MQTT connection is <em>already established</em>, the connection is kept — a live connection is proof of the right network. The gate only steers <em>connection attempts</em>, never tears down an established one.</p>
+    </details>
+    <div class="card manual" id="b3">
+      <h3>B3 — OEM battery optimization / aggressive app killers <span class="badge badge-warning">manual action</span></h3>
+      <p style="margin:0">Some vendors kill background services regardless of foreground-service type. This cannot be fixed purely in code: <strong>disable battery optimization for walkingpad2hc</strong> (Settings → Apps → walkingpad2hc → Battery → Unrestricted), and exempt it from any vendor-specific "battery saver" that terminates background apps. If stops persist on a specific device after the fixes above, this is the first suspect — check <code class="path">adb logcat</code> for the process being killed without a service lifecycle event.</p>
+    </div>
+  </section>
+  <section id="fixes">
+    <h2>Fixes implemented</h2>
+    <p>Root-cause fixes; no symptom patching. The decision logic was extracted into a pure class so every use case is unit-testable without an Android device.</p>
+    <table>
+      <thead><tr><th>File</th><th>Change</th><th>Addresses</th></tr></thead>
+      <tbody>
+        <tr><td><span class="path">sync/CatchUpPolicy.kt</span> <span class="badge badge-success">new</span></td><td>Pure decision module: input (counter value, time, persisted markers, own HC summary) → decision (None / Covered / Write / Defer). Reconciles against Health Connect's own records; final guard turns every write into a defer when the reconciliation read failed. Ambiguity bias: under-count, never duplicate.</td><td><a href="#d1">D1</a>, <a href="#d3">D2</a>, <a href="#d2">D3</a></td></tr>
+        <tr><td><span class="path">sync/StepSyncService.kt</span></td><td>BaselineSet branch now delegates to CatchUpPolicy; deferred decisions are parked as pending records and retried; persisted lastSeen snapshot loaded once at init as a cross-day hint. Pending retry (<span class="path">pendingCovered</span>) also checks Health Connect.</td><td><a href="#d1">D1</a>, <a href="#d3">D2</a>, <a href="#d2">D3</a>, <a href="#d4">D4</a></td></tr>
+        <tr><td><span class="path">sync/StepSyncService.kt</span></td><td><span class="path">evaluateGate()</span> keeps an established MQTT connection when the gate is blocked (no more teardown on unreadable SSID). Foreground service type resolves to <code class="path">health</code> on API 34+ with the HC write permission, else <code class="path">dataSync</code>/<code class="path">location</code> as before.</td><td><a href="#b2">B2</a>, <a href="#b1">B1</a></td></tr>
+        <tr><td><span class="path">AndroidManifest.xml</span></td><td>Added <code class="path">FOREGROUND_SERVICE_HEALTH</code> permission; service type now <code class="path">dataSync|location|health</code>.</td><td><a href="#b1">B1</a></td></tr>
+        <tr><td><span class="path">app/src/test/.../sync/CatchUpPolicyTest.kt</span> <span class="badge badge-success">new</span></td><td>19 test cases covering the full use-case matrix below.</td><td><a href="#usecases">all</a></td></tr>
+      </tbody>
+    </table>
+    <figure class="diagram" role="img" aria-label="Decision flow of CatchUpPolicy: an incoming cumulative counter is classified as reset or continuation, reconciled against Health Connect, and results in covered, write, or defer.">
+      <svg viewBox="0 0 860 340" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="dg-text"/>
+          </marker>
+        </defs>
+        <style>
+          .diagram .dg-box { fill: var(--surface); stroke: var(--border); }
+          .diagram .dg-text { fill: var(--text); }
+          .diagram .dg-muted { fill: var(--text-muted); }
+          .diagram .dg-accent { fill: var(--accent); }
+          .diagram .dg-ok { fill: var(--success-tint); stroke: var(--success); }
+          .diagram .dg-warn { fill: var(--warning-tint); stroke: var(--warning); }
+        </style>
+        <rect x="20" y="40" width="180" height="60" rx="8" class="dg-box"/>
+        <text x="110" y="63" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="14">MQTT counter</text>
+        <text x="110" y="84" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">cumulative steps</text>
+        <rect x="300" y="28" width="220" height="40" rx="8" class="dg-box"/>
+        <text x="410" y="48" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="13">≥ max(lastWritten, lastSeen)?</text>
+        <text x="410" y="80" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">continuation ← yes · reset ← no</text>
+        <rect x="600" y="8" width="220" height="44" rx="8" class="dg-box"/>
+        <text x="710" y="30" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="13">covered = max(markers,</text>
+        <text x="710" y="48" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">own HC total for today)</text>
+        <rect x="20" y="150" width="200" height="60" rx="8" class="dg-ok"/>
+        <text x="120" y="173" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="14" font-weight="600">Covered</text>
+        <text x="120" y="194" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">already in HC — no write</text>
+        <rect x="330" y="150" width="200" height="60" rx="8" class="dg-ok"/>
+        <text x="430" y="173" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="14" font-weight="600">Write (start, now, delta)</text>
+        <text x="430" y="194" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">steps − covered, start clamped</text>
+        <rect x="640" y="150" width="200" height="60" rx="8" class="dg-warn"/>
+        <text x="740" y="173" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="14" font-weight="600">Defer → pending record</text>
+        <text x="740" y="194" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">HC read failed — retry later</text>
+        <rect x="330" y="266" width="200" height="52" rx="8" class="dg-box"/>
+        <text x="430" y="285" text-anchor="middle" dominant-baseline="central" class="dg-text" font-size="13">own HC read failed?</text>
+        <text x="430" y="304" text-anchor="middle" dominant-baseline="central" class="dg-muted" font-size="12">any Write becomes Defer</text>
+        <line x1="200" y1="70" x2="296" y2="48" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="520" y1="48" x2="596" y2="34" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="556" y="30" text-anchor="middle" class="dg-muted" font-size="11">yes</text>
+        <line x1="410" y1="68" x2="410" y2="146" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="424" y="110" class="dg-muted" font-size="11">reconcile</text>
+        <line x1="640" y1="90" x2="500" y2="146" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="120" y1="100" x2="120" y2="146" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="430" y1="146" x2="430" y2="262" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="444" y="210" class="dg-muted" font-size="11">guard</text>
+        <line x1="330" y1="292" x2="222" y2="210" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+        <line x1="530" y1="292" x2="700" y2="214" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+        <text x="620" y="270" class="dg-muted" font-size="11">yes</text>
+        <text x="240" y="268" class="dg-muted" font-size="11">no</text>
+      </svg>
+    </figure>
+  </section>
+  <section id="usecases">
+    <h2>Use-case matrix</h2>
+    <p>Every scenario the baseline/catch-up logic can face, old vs. new behavior. All new-behavior cells are asserted by unit tests in <span class="path">CatchUpPolicyTest.kt</span>.</p>
+    <table>
+      <thead><tr><th>Scenario</th><th>Old behavior</th><th>New behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Fresh install, HC read OK, HC empty</td><td>Wrote full counter ✓</td><td>Write full counter</td></tr>
+        <tr class="manual"><td>Fresh install, HC read <em>fails</em></td><td><span class="badge badge-danger">duplicate</span> wrote full counter (read failure == empty day)</td><td>Defer → pending record, retried on next message</td></tr>
+        <tr><td>Fresh install, HC already holds steps</td><td>Skipped (reconciled) ✓</td><td>Covered (same, now also when markers are missing)</td></tr>
+        <tr><td>Same-day restart, marker current</td><td>Wrote gap ✓</td><td>Write gap (verified against own HC records)</td></tr>
+        <tr class="manual"><td>Same-day restart, marker lags (kill window)</td><td><span class="badge badge-danger">duplicate</span> re-wrote already-written gap</td><td>Capped by own HC total → Covered</td></tr>
+        <tr><td>Same-day restart, steps ≤ marker / ≤ own total</td><td>Skipped ✓</td><td>Covered</td></tr>
+        <tr class="manual"><td>Same-day restart, HC read fails</td><td><span class="badge badge-danger">duplicate</span> marker-only math, wrote blindly</td><td>Defer → pending record</td></tr>
+        <tr><td>New day, counter reset, walked 0 so far</td><td>Wrote full counter ✓</td><td>Write full counter (minus own HC total)</td></tr>
+        <tr class="manual"><td>New day, counter <em>kept counting</em> (treadmill powered)</td><td><span class="badge badge-danger">duplicate</span> re-posted yesterday's full amount</td><td>Continuation → only the excess over last known value</td></tr>
+        <tr><td>New day, counter reset, HC read fails</td><td><span class="badge badge-danger">duplicate</span> wrote full counter</td><td>Defer → pending record</td></tr>
+        <tr><td>Catch-up write fails (HC busy/timeout)</td><td><span class="badge badge-warning">lost</span> gap never re-attempted until next baseline</td><td>Parked as pending record, retried with coverage re-check</td></tr>
+        <tr><td>Pending retry after kill-after-success</td><td><span class="badge badge-warning">risk</span> marker-only check</td><td>Dropped when own HC records cover the range; exact retries still deduped via clientRecordId</td></tr>
+        <tr><td>Counter = 0 / no steps</td><td>Edge handling inconsistent</td><td>None — no write, no state change</td></tr>
+      </tbody>
+    </table>
+    <p style="color: var(--text-muted); font-size:0.875rem">The in-session delta path (<span class="path">Record</span> results: step increments between consecutive messages) was reviewed and is correct — it computes ranges from the last recorded end time and was left unchanged.</p>
+  </section>
+  <section id="verification">
+    <h2>Verification</h2>
+    <p><span class="badge badge-success">BUILD SUCCESSFUL</span> <span class="badge badge-success">73 tests, 0 failures</span> — <code class="path">gradle testDebugUnitTest</code> (JVM unit tests; the pure decision logic is fully covered without an Android device).</p>
+    <table>
+      <thead><tr><th>Test class</th><th>Tests</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td><span class="path">CatchUpPolicyTest</span></td><td>19</td><td><span class="badge badge-success">new</span> full use-case matrix (fresh install, same-day, new day, edge cases)</td></tr>
+        <tr><td><span class="path">StepMessageParserTest</span></td><td>10</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">NetworkGateTest</span></td><td>8</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">SyncStatePolicyTest</span></td><td>7</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">StepDeltaCalculatorTest</span></td><td>7</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">AppSettingsValidationTest</span></td><td>7</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">SyncErrorsTest</span></td><td>6</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">PasswordCipherTest</span></td><td>4</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">AppSettingsTest</span></td><td>3</td><td>existing, still passing</td></tr>
+        <tr><td><span class="path">HealthConnectWriterTest</span></td><td>2</td><td>existing, still passing</td></tr>
+      </tbody>
+    </table>
+    <details class="card">
+      <summary><h3>Test command</h3> <span class="chip">reproducible</span></summary>
+      <pre><code>./gradlew testDebugUnitTest --no-daemon</code></pre>
+      <p style="margin:0">Run from the repository root. The two behavior changes surfaced by writing the tests (steps equal to the known high value must be <em>Covered</em>, not treated as a reset; continuation catch-up resumes from the own-record end time) are documented in <a href="#fixes">Fixes implemented</a>.</p>
+    </details>
+    <div class="card manual">
+      <h3>Still recommended: on-device smoke test <span class="badge badge-warning">manual</span></h3>
+      <p style="margin:0">Unit tests prove the decision logic; the MQTT/Health Connect integration should be sanity-checked once on a real device: sync a day normally, force-stop the app, restart on Wi-Fi, and confirm Health Connect shows no duplicate records. Also walk past midnight with the treadmill powered to exercise the continuation path.</p>
+    </div>
+  </section>
+  <section id="limitations">
+    <h2>Known limitations &amp; caveats</h2>
+    <ul>
+      <li><strong>Ambiguity is resolved toward under-counting.</strong> If the treadmill counter resets <em>and</em> the user has already walked past yesterday's total before the first sync of the day, the new value can exceed <code class="path">max(lastWritten, lastSeen)</code> and is interpreted as a continuation — the excess is written, but steps between the reset point and the old maximum are not recoverable. This is deliberate: a wrong guess toward "reset" would duplicate; the chosen bias never duplicates and misses only in this corner case.</li>
+      <li><strong>Mid-day counter reset + restart is conservative.</strong> After a mid-day reset, catch-up reconciles against today's own HC records; if markers are unavailable it defers rather than guessing. May under-count until the next in-session delta records flow normally.</li>
+      <li><strong>Monotonic-counter assumption.</strong> The day-rollover logic assumes the MQTT counter is a per-day (or at least non-decreasing during a day) counter. If the source publishes per-session counters, the continuation interpretation degrades to under-counting, never duplication.</li>
+      <li><strong>The in-app "steps today" metric aggregates all sources.</strong> <span class="path">HealthConnectWriter.stepsToday()</span> counts every app's steps for today — display only, never used for sync decisions.</li>
+      <li><strong>No persistent MQTT session.</strong> The client uses a clean session (random client ID); messages published while disconnected are lost. Catch-up therefore relies on the retained/current counter value — another reason the reconciliation-based catch-up matters.</li>
+      <li><strong>The delta Record path was left unchanged</strong> — it was reviewed and is correct (epoch-based ranges from the last recorded end time).</li>
+      <li><strong>Device-dependent behavior cannot be unit-tested</strong>: HC read/write failures, FGS type selection, and SSID readability need the on-device smoke test above.</li>
+    </ul>
+  </section>
+  </main>
+
+</div>
+</body>
+</html>
