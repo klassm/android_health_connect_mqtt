@@ -394,6 +394,7 @@ class StepSyncService : LifecycleService() {
             SyncStatusHolder.setError("Unparseable message: ${payload.take(200)}")
             return
         }
+        Log.d(TAG, "msg: steps=$steps payload=${payload.take(120)}")
         val now = System.currentTimeMillis()
         SyncStatusHolder.update {
             if (it.lastMessageAt == null || now - it.lastMessageAt >= 5_000 || it.mqttSteps != steps)
@@ -406,6 +407,7 @@ class StepSyncService : LifecycleService() {
         }
         when (val result = calculator.onMessage(steps, now)) {
             is DeltaResult.Record -> {
+                Log.i(TAG, "delta: counter=$steps +${result.count} [${result.startTime}→${result.endTime}]")
                 if (tryWrite(result)) {
                     saveLastWrittenIfNewer(result.endSteps, result.endTime)
                     setPending(null)
