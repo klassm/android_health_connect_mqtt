@@ -191,7 +191,7 @@
   <header class="page-header">
     <!-- TITLE: one <h1>, the deliverable's name -->
     <h1>Health Connect Sync — Root-Cause Review</h1>
-    <p class="meta"><time datetime="2026-10-26">2026-10-26</time><span class="sep">·</span>Duplicate step postings at start sync &amp; sync stopping in background — code review of walkingpad2hc; fixes implemented, 76/76 unit tests passing</p>
+    <p class="meta"><time datetime="2026-10-26">2026-10-26</time><span class="sep">·</span>Duplicate step postings at start sync &amp; sync stopping in background — code review of walkingpad2hc; fixes implemented, 86/86 unit tests passing</p>
     <!-- META: generation date · one-line context (what this covers, derived from what; caveats) -->
     <p class="meta"><time datetime="YYYY-MM-DD">YYYY-MM-DD</time><span class="sep">·</span>Context line</p>
   </header>
@@ -231,7 +231,7 @@
       </div>
       <div class="card">
         <h3>Status</h3>
-        <p style="margin:0"><span class="badge badge-success">Implemented</span> <span class="badge badge-success">73/73 tests passing</span> <span class="badge badge-warning">Device verification pending</span></p>
+        <p style="margin:0"><span class="badge badge-success">Implemented</span> <span class="badge badge-success">86/86 tests passing</span> <span class="badge badge-warning">Device verification pending</span></p>
       </div>
     </div>
   </section>
@@ -263,6 +263,10 @@ writeSteps(..., steps - alreadyThere)       // full counter re-posted</code></pr
       <p><span class="path">pendingCovered()</span> decided "already written" solely via <span class="path">SyncStatePolicy.isCoveredByLastWritten</span>. Same lag window as D3: a pending record could be re-written although Health Connect already holds it (mitigated only when the recomputed range produced the identical <code class="path">clientRecordId</code>).</p>
       <p><strong>Fix:</strong> the retry path now also reconciles against the app's own Health Connect records before re-writing.</p>
     </details>
+    <div class="card" id="d5">
+      <h3>D5 — Delta path wrote implausible counter jumps <span class="badge badge-danger">confirmed on device</span> <span class="chip">treadmill reboot</span></h3>
+      <p style="margin:0">Confirmed by device log (13:06): after an app restart the broker's retained message <code>"stepsTotal": 0</code> set the in-memory baseline to 0; 32 seconds later the treadmill published <code>stepsTotal: 11295</code> (its cumulative counter — it had rebooted and resumed at the accumulated total). The in-session delta path computed <code>11295 − 0</code> and wrote it blindly as one record over 32 seconds (353 steps/s) — all of it already posted before the reset. The baseline path reconciles against Health Connect; the delta path was the last path trusting the counter unconditionally.</p>
+    </div>
     <div class="card">
       <h3>Context: why clientRecordId alone didn't save us</h3>
       <p style="margin:0">Every written record carries <code class="path">clientRecordId = "wp2hc-&lt;start&gt;-&lt;end&gt;-&lt;count&gt;"</code>, so an <em>exact</em> retry (same range) is upserted by Health Connect instead of duplicated. But all four defect paths computed a <em>different</em> range or count than the original write — new ID, real duplicate. The dedupe remains useful for exact retries (e.g. timeout-after-success), but it cannot be the only line of defense.</p>
@@ -298,6 +302,8 @@ writeSteps(..., steps - alreadyThere)       // full counter re-posted</code></pr
         <tr><td><span class="path">MainActivity.kt</span></td><td>Requests <code class="path">ACTIVITY_RECOGNITION</code> (runtime, API 34+) alongside the other permissions so the non-limited <code class="path">health</code> type becomes available.</td><td><a href="#b1">B1</a></td></tr>
         <tr><td><span class="path">sync/ForegroundServiceTypePolicy.kt</span> <span class="badge badge-success">new</span></td><td>Pure gate for the <code class="path">health</code> FGS type: API 34+ AND a system-qualifying permission; otherwise fall back to <code class="path">dataSync</code>. Mirrors the framework's requirement list (see <a href="#b1">B1</a>). Failure mode is a fallback, never a crash.</td><td><a href="#b1">B1</a></td></tr>
         <tr><td><span class="path">AndroidManifest.xml</span></td><td>Added <code class="path">FOREGROUND_SERVICE_HEALTH</code> and <code class="path">ACTIVITY_RECOGNITION</code> permissions; service type now <code class="path">dataSync|location|health</code>.</td><td><a href="#b1">B1</a></td></tr>
+        <tr><td><span class="path">sync/DeltaRatePolicy.kt</span> <span class="badge badge-success">new</span></td><td>Plausibility gate for in-session deltas: anything implying a sustained cadence above 4 steps/s (sub-second windows floored to 1 s) cannot be walking. Implausible records are rerouted to the baseline handler — the same Health Connect reconciliation as baselines — instead of being written blindly.</td><td><a href="#d5">D5</a></td></tr>
+        <tr><td><span class="path">sync/StepSyncService.kt</span></td><td>Per-message diagnostic logging (raw counter value + payload, delta decisions with counter position). Baseline handling extracted into <span class="path">handleBaseline</span>, shared by the BaselineSet branch and implausible-delta reroutes.</td><td><a href="#d5">D5</a> <span class="chip">observability</span></td></tr>
         <tr><td><span class="path">app/src/test/.../sync/CatchUpPolicyTest.kt</span> <span class="badge badge-success">new</span></td><td>19 test cases covering the full use-case matrix below.</td><td><a href="#usecases">all</a></td></tr>
       </tbody>
     </table>
@@ -371,6 +377,7 @@ writeSteps(..., steps - alreadyThere)       // full counter re-posted</code></pr
         <tr><td>New day, counter reset, HC read fails</td><td><span class="badge badge-danger">duplicate</span> wrote full counter</td><td>Defer → pending record</td></tr>
         <tr><td>Catch-up write fails (HC busy/timeout)</td><td><span class="badge badge-warning">lost</span> gap never re-attempted until next baseline</td><td>Parked as pending record, retried with coverage re-check</td></tr>
         <tr><td>Pending retry after kill-after-success</td><td><span class="badge badge-warning">risk</span> marker-only check</td><td>Dropped when own HC records cover the range; exact retries still deduped via clientRecordId</td></tr>
+        <tr class="manual"><td>Counter jumps (treadmill reboot: 0 → 11,295 in 32 s)</td><td><span class="badge badge-danger">duplicate</span> delta path wrote the full jump as one record</td><td>Rerouted to baseline reconciliation → only steps Health Connect doesn't hold are written</td></tr>
         <tr><td>Counter = 0 / no steps</td><td>Edge handling inconsistent</td><td>None — no write, no state change</td></tr>
       </tbody>
     </table>
@@ -378,11 +385,12 @@ writeSteps(..., steps - alreadyThere)       // full counter re-posted</code></pr
   </section>
   <section id="verification">
     <h2>Verification</h2>
-    <p><span class="badge badge-success">BUILD SUCCESSFUL</span> <span class="badge badge-success">76 tests, 0 failures</span> — <code class="path">gradle testDebugUnitTest</code> (JVM unit tests; the pure decision logic is fully covered without an Android device). The FGS type-selection crash (see <a href="#b1">B1</a>) was found on a real device and its gate is now unit-tested.</p>
+    <p><span class="badge badge-success">BUILD SUCCESSFUL</span> <span class="badge badge-success">86 tests, 0 failures</span> — <code class="path">gradle testDebugUnitTest</code> (JVM unit tests; the pure decision logic is fully covered without an Android device). The FGS type-selection crash (see <a href="#b1">B1</a>) was found on a real device and its gate is now unit-tested.</p>
     <table>
       <thead><tr><th>Test class</th><th>Tests</th><th>Note</th></tr></thead>
       <tbody>
         <tr><td><span class="path">CatchUpPolicyTest</span></td><td>19</td><td><span class="badge badge-success">new</span> full use-case matrix (fresh install, same-day, new day, edge cases)</td></tr>
+        <tr><td><span class="path">DeltaRatePolicyTest</span></td><td>10</td><td><span class="badge badge-success">new</span> plausibility gate: reboot jumps, idle jumps, real walking, boundaries, sub-second floors</td></tr>
         <tr><td><span class="path">StepMessageParserTest</span></td><td>10</td><td>existing, still passing</td></tr>
         <tr><td><span class="path">NetworkGateTest</span></td><td>8</td><td>existing, still passing</td></tr>
         <tr><td><span class="path">SyncStatePolicyTest</span></td><td>7</td><td>existing, still passing</td></tr>
