@@ -68,6 +68,15 @@ class StepSyncService : LifecycleService() {
     @Volatile
     private var destroyed = false
     private var pendingRecord: DeltaResult.Record? = null
+    // A retained message is the broker's stored snapshot (replayed on every
+    // subscribe), NOT proof of what Health Connect already holds. After any
+    // retained message the calculator's baseline may be stale-low (e.g.
+    // stepsTotal: 0 replayed after a treadmill reboot), so the next live
+    // delta (counter − baseline) would re-post already-written steps as one
+    // record — slow enough to pass the rate guard. Route it through the
+    // catch-up reconciliation instead, which caps coverage at
+    // max(lastWritten marker, own Health Connect records).
+    private var reconcileAfterRetainedSnapshot = false
     private var connectivityManager: ConnectivityManager? = null
     @Volatile
     private var lastPersistedSeenSteps: Long? = null
@@ -75,7 +84,7 @@ class StepSyncService : LifecycleService() {
     private val initOnce = AtomicBoolean(false)
     private val retryScheduled = AtomicBoolean(false)
     private var lastGateEvalMillis = 0L
-    private val messages = Channel<String>(64, BufferOverflow.DROP_OLDEST)
+    private val messages = Channel<Pair<String, Boolean>>(64, BufferOverflow.DROP_OLDEST)
     private val connectDispatcher = Executors.newSingleThreadExecutor { r -> Thread(r, "mqtt-connect") }.asCoroutineDispatcher()
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -149,8 +158,14 @@ class StepSyncService : LifecycleService() {
                 startMessageConsumer()
             }
             if (!destroyed) {
-                SyncStatusHolder.setPhase(SyncPhase.WAITING_FOR_NETWORK)
-                evaluateGate()
+                if (mqttClient != null) {
+                    // Re-start while already running (e.g. app reopened):
+                    // do not demote a live connection to "waiting for network".
+                    SyncStatusHolder.setPhase(SyncPhase.CONNECTED)
+                } else {
+                    SyncStatusHolder.setPhase(SyncPhase.WAITING_FOR_NETWORK)
+                    evaluateGate()
+                }
             }
         }
         return START_STICKY
@@ -183,7 +198,10 @@ class StepSyncService : LifecycleService() {
         SyncStatusHolder.setPhase(SyncPhase.DISCONNECTED, "sync stopped by Android (foreground time limit)")
         SyncStatusHolder.setError("Android stopped the sync after its foreground time budget — press Start to resume")
         stopSelf()
-        super.onDestroy()
+        // NEVER call super.onDestroy() here: it desynchronizes the
+        // LifecycleService registry (DESTROYED → CREATED crash when the
+        // system delivers further lifecycle events to this instance).
+        // stopSelf() lets the framework drive onDestroy normally.
     }
 
     private fun locationServicesEnabled(): Boolean = try {
@@ -228,6 +246,10 @@ class StepSyncService : LifecycleService() {
         if (mqttClient == null) {
             bindToWifiNetwork(cm)
             connectMqtt()
+        } else {
+            // Gate passed with a live connection — make sure the status
+            // reflects it (evaluateGate can run after a service re-start).
+            SyncStatusHolder.setPhase(SyncPhase.CONNECTED)
         }
     }
 
@@ -299,7 +321,12 @@ class StepSyncService : LifecycleService() {
                     self.subscribeWith()
                         .topicFilter(settings.topic)
                         .qos(MqttQos.AT_LEAST_ONCE)
-                        .callback { publish -> onMessage(String(publish.payloadAsBytes, Charsets.UTF_8)) }
+                        .callback { publish ->
+                            onMessage(
+                                String(publish.payloadAsBytes, Charsets.UTF_8),
+                                publish.isRetain,
+                            )
+                        }
                         .send()
                         .whenComplete { _, ex ->
                             if (ex != null) {
@@ -374,7 +401,7 @@ class StepSyncService : LifecycleService() {
         lifecycleScope.launch(Dispatchers.Default) {
             for (payload in messages) {
                 try {
-                    handlePayload(payload)
+                    handlePayload(payload.first, payload.second)
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     Log.w(TAG, "payload handling failed", e)
@@ -384,17 +411,17 @@ class StepSyncService : LifecycleService() {
         }
     }
 
-    private fun onMessage(payload: String) {
-        messages.trySend(payload)
+    private fun onMessage(payload: String, retained: Boolean) {
+        messages.trySend(payload to retained)
     }
 
-    private suspend fun handlePayload(payload: String) {
+    private suspend fun handlePayload(payload: String, retained: Boolean) {
         val steps = StepMessageParser.parse(payload, settings.stepsKey)
         if (steps == null) {
             SyncStatusHolder.setError("Unparseable message: ${payload.take(200)}")
             return
         }
-        Log.d(TAG, "msg: steps=$steps payload=${payload.take(120)}")
+        Log.d(TAG, "msg: steps=$steps retained=$retained payload=${payload.take(120)}")
         val now = System.currentTimeMillis()
         SyncStatusHolder.update {
             if (it.lastMessageAt == null || now - it.lastMessageAt >= 5_000 || it.mqttSteps != steps)
@@ -405,10 +432,21 @@ class StepSyncService : LifecycleService() {
             lastPersistedSeenSteps = steps
             settingsRepository.saveLastSeen(steps, now)
         }
+        if (retained) reconcileAfterRetainedSnapshot = true
         when (val result = calculator.onMessage(steps, now)) {
             is DeltaResult.Record -> {
-                Log.i(TAG, "delta: counter=$steps +${result.count} [${result.startTime}→${result.endTime}]")
-                if (DeltaRatePolicy.isImplausible(result.count, result.endTime - result.startTime)) {
+                if (reconcileAfterRetainedSnapshot) {
+                    reconcileAfterRetainedSnapshot = false
+                    Log.i(
+                        TAG,
+                        "delta after retained snapshot — routing through reconciliation " +
+                            "(counter=$steps, raw delta=+${result.count})"
+                    )
+                    // The calculator already sits at the snapshot position;
+                    // reconciliation decides how much of the delta is
+                    // genuinely new.
+                    handleBaseline(steps, now)
+                } else if (DeltaRatePolicy.isImplausible(result.count, result.endTime - result.startTime)) {
                     Log.w(
                         TAG,
                         "delta implausible: ${result.count} steps in ${(result.endTime - result.startTime) / 1000} s — " +
